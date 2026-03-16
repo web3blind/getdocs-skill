@@ -582,24 +582,22 @@ async function crawlAllPages(config) {
     console.log(`Progress: downloaded ${pages.size}/${discovered.size}, queue=${queue.length}`);
   }
 
-  const missing = [...discovered].filter((urlString) => !pages.has(urlString));
-  if (missing.length > 0) {
-    const preview = missing.slice(0, 20);
-    const message = [
-      `Failed strict crawl. Missing pages: ${missing.length}.`,
-      ...preview.map((item) => `- ${item}`),
-      missing.length > preview.length ? `...and ${missing.length - preview.length} more` : ""
-    ]
-      .filter(Boolean)
-      .join("\n");
-    throw new Error(message);
-  }
-
+  // Strict mode disabled: continue even if some pages failed to download
+  // Log failures for visibility but don't fail the whole process
   if (failures.size > 0) {
     const lines = [...failures.entries()]
       .slice(0, 20)
       .map(([urlString, reason]) => `- ${urlString} -> ${reason}`);
-    throw new Error(`Fetch failures detected (${failures.size}):\n${lines.join("\n")}`);
+    console.log(`Warning: ${failures.size} pages failed to download:`);
+    console.log(lines.join("\n"));
+  }
+
+  // Log skipped pages but don't fail
+  const missing = [...discovered].filter((urlString) => !pages.has(urlString));
+  if (missing.length > 0) {
+    const preview = missing.slice(0, 20);
+    console.log(`Warning: ${missing.length} discovered pages were not downloaded:`);
+    console.log(preview.join("\n"));
   }
 
   return {

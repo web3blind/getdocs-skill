@@ -85,6 +85,6 @@ Do not paste the downloaded documentation unless the user asks for content. Down
 
 **Notes**
 
-- The underlying downloader is strict: if discovered pages are missing, the run fails.
+- The downloader continues even if some pages fail — it logs warnings but saves successfully downloaded pages.
 - The wrapper stores each run in `runs/` with an isolated timestamped directory.
 - The generated `FILELIST.md` is the preferred entry point for selecting a page in `manyfiles` mode.
