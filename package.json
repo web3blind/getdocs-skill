@@ -1,0 +1,15 @@
+{
+  "name": "docs-skill",
+  "version": "1.0.0",
+  "description": "OpenClaw skill for downloading documentation into Markdown",
+  "type": "module",
+  "scripts": {
+    "getdocs": "node scripts/getdocs.js",
+    "download-docs": "node scripts/download-docs.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["openclaw", "skill", "documentation", "markdown", "scraper"],
+  "license": "MIT"
+}

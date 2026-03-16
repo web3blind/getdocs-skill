@@ -1,0 +1,7 @@
+interface:
+  display_name: "Get Docs"
+  short_description: "Download docs as one file or many files"
+  default_prompt: "Use $getdocs to download a public docs URL into Markdown for analysis."
+
+policy:
+  allow_implicit_invocation: true
