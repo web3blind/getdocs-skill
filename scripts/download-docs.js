@@ -98,6 +98,9 @@ Options:
   --url, -u          Docs root URL
   --mode, -m         manyfiles | onefile
   --out, -o          Output root directory (default: docs-results)
+  --fetch-mode       auto | direct | jina (default: auto)
+  --jina-rpm         Max Jina requests per minute in auto/jina mode (default: 12, about 5s/request)
+  --jina-key         Jina API key
   --concurrency      Parallel page fetches (default: 5)
   --retries          Retry count per request (default: 3)
   --retry-delay-ms   Delay between retries in ms (default: 1000)
@@ -116,6 +119,14 @@ function normalizeMode(modeRaw) {
   const mode = String(modeRaw || "").trim().toLowerCase();
   if (mode !== "manyfiles" && mode !== "onefile") {
     throw new Error(`Unsupported mode "${modeRaw}". Use "manyfiles" or "onefile".`);
+  }
+  return mode;
+}
+
+function normalizeFetchMode(fetchModeRaw) {
+  const mode = String(fetchModeRaw || "auto").trim().toLowerCase();
+  if (!["auto", "direct", "jina"].includes(mode)) {
+    throw new Error(`Unsupported fetch mode "${fetchModeRaw}". Use "auto", "direct", or "jina".`);
   }
   return mode;
 }
@@ -303,6 +314,85 @@ async function fetchText(urlString, retries, retryDelayMs) {
   return response.text();
 }
 
+async function fetchTextWithHeaders(urlString, retries, retryDelayMs, headers = {}) {
+  let attempt = 0;
+  let lastError = null;
+
+  while (attempt < retries) {
+    attempt += 1;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
+    try {
+      const response = await fetch(urlString, {
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "user-agent": "docs-downloader/1.1 (+jina-fallback)",
+          ...headers
+        }
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${urlString}`);
+      }
+      return await response.text();
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error;
+      if (attempt < retries) {
+        await wait(retryDelayMs);
+      }
+    }
+  }
+
+  throw lastError || new Error(`Failed to fetch ${urlString}`);
+}
+
+async function fetchViaJina(pageUrl, retries, retryDelayMs, jinaApiKey) {
+  const jinaUrl = `https://r.jina.ai/${pageUrl}`;
+  const headers = {
+    Accept: "text/plain",
+    "X-Return-Format": "markdown",
+    "X-With-Links-Summary": "true"
+  };
+
+  if (jinaApiKey) {
+    headers.Authorization = `Bearer ${jinaApiKey}`;
+  }
+
+  const text = await fetchTextWithHeaders(jinaUrl, retries, retryDelayMs, headers);
+
+  let title = pageUrl;
+  const titleMatch = text.match(/^Title:\s*(.+)$/m);
+  if (titleMatch) {
+    title = titleMatch[1].trim();
+  }
+
+  const markdown = text
+    .replace(/^Title:.*$/m, "")
+    .replace(/^URL Source:.*$/m, "")
+    .replace(/^Markdown Content:.*$/m, "")
+    .trim();
+
+  const links = new Set();
+  const linkRegex = /\[(?:[^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+  let linkMatch = linkRegex.exec(markdown);
+  while (linkMatch) {
+    const normalized = canonicalizeUrl(linkMatch[1]);
+    if (normalized) {
+      links.add(normalized);
+    }
+    linkMatch = linkRegex.exec(markdown);
+  }
+
+  return {
+    title,
+    markdown,
+    links: [...links]
+  };
+}
+
 async function discoverSitemapUrls(origin, docsPathRoot, retries, retryDelayMs) {
   const candidateSitemaps = new Set([
     `${origin}/sitemap.xml`,
@@ -485,10 +575,15 @@ async function crawlAllPages(config) {
     docsPathRoot,
     retries,
     retryDelayMs,
-    concurrency
+    concurrency,
+    fetchMode,
+    jinaRpm,
+    jinaApiKey
   } = config;
 
   const turndown = buildTurndown();
+  const effectiveConcurrency = fetchMode === "direct" ? Math.max(concurrency, 1) : 1;
+  const jinaDelayMs = Math.max(Math.ceil(60000 / jinaRpm), 3000);
   const discovered = new Set();
   const discoveryIndex = new Map();
   const queue = [];
@@ -517,12 +612,34 @@ async function crawlAllPages(config) {
   }
 
   console.log(`Discovered from sitemap/seed: ${discovered.size} pages`);
+  if (fetchMode !== "direct") {
+    console.log(`Jina enabled: mode=${fetchMode}, rpm=${jinaRpm}, batch delay=${jinaDelayMs}ms`);
+  }
 
   while (queue.length > 0) {
-    const batch = queue.splice(0, concurrency);
+    const batch = queue.splice(0, effectiveConcurrency);
     const results = await Promise.all(
       batch.map(async (urlString) => {
         try {
+          if (fetchMode !== "direct") {
+            try {
+              const extracted = await fetchViaJina(urlString, retries, retryDelayMs, jinaApiKey);
+              return {
+                ok: true,
+                requestedUrl: urlString,
+                finalUrl: urlString,
+                title: extracted.title,
+                markdown: extracted.markdown,
+                links: extracted.links,
+                fetchStrategy: "jina"
+              };
+            } catch (jinaError) {
+              if (fetchMode === "jina") {
+                throw jinaError;
+              }
+            }
+          }
+
           const response = await fetchWithRetry(urlString, retries, retryDelayMs);
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -543,7 +660,8 @@ async function crawlAllPages(config) {
             finalUrl,
             title: extracted.title,
             markdown: extracted.markdown,
-            links: extracted.links
+            links: extracted.links,
+            fetchStrategy: "direct"
           };
         } catch (error) {
           return {
@@ -580,6 +698,9 @@ async function crawlAllPages(config) {
     }
 
     console.log(`Progress: downloaded ${pages.size}/${discovered.size}, queue=${queue.length}`);
+    if (queue.length > 0 && fetchMode !== "direct") {
+      await wait(jinaDelayMs);
+    }
   }
 
   // Strict mode disabled: continue even if some pages failed to download
@@ -696,6 +817,9 @@ async function main() {
   const retries = parseNumber(args.retries || process.env.DOCS_RETRIES, 3);
   const retryDelayMs = parseNumber(args["retry-delay-ms"] || process.env.DOCS_RETRY_DELAY_MS, 1000);
   const concurrency = parseNumber(args.concurrency || process.env.DOCS_CONCURRENCY, 5);
+  const fetchMode = normalizeFetchMode(args["fetch-mode"] || process.env.DOCS_FETCH_MODE || "auto");
+  const jinaRpm = parseNumber(args["jina-rpm"] || process.env.DOCS_JINA_RPM, 12);
+  const jinaApiKey = args["jina-key"] || process.env.DOCS_JINA_KEY || "";
 
   const normalizedStart = normalizeUrl(docsUrl);
   const startUrlParsed = new URL(normalizedStart);
@@ -705,6 +829,7 @@ async function main() {
 
   console.log(`Start URL: ${normalizedStart}`);
   console.log(`Mode: ${mode}`);
+  console.log(`Fetch mode: ${fetchMode}`);
   console.log(`Output root: ${path.resolve(outputRootDir)}`);
   console.log(`Doc root path: ${docsPathRoot}`);
 
@@ -714,7 +839,10 @@ async function main() {
     docsPathRoot,
     retries,
     retryDelayMs,
-    concurrency
+    concurrency,
+    fetchMode,
+    jinaRpm,
+    jinaApiKey
   });
 
   await writeOutputs(
