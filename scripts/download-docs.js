@@ -99,7 +99,7 @@ Options:
   --mode, -m         manyfiles | onefile
   --out, -o          Output root directory (default: docs-results)
   --fetch-mode       auto | direct | jina (default: auto)
-  --jina-rpm         Max Jina requests per minute in auto/jina mode (default: 12, about 5s/request)
+  --jina-rpm         Max Jina requests per minute in auto/jina mode (default: 20, about 3s/request)
   --jina-key         Jina API key
   --concurrency      Parallel page fetches (default: 5)
   --retries          Retry count per request (default: 3)
@@ -818,7 +818,7 @@ async function main() {
   const retryDelayMs = parseNumber(args["retry-delay-ms"] || process.env.DOCS_RETRY_DELAY_MS, 1000);
   const concurrency = parseNumber(args.concurrency || process.env.DOCS_CONCURRENCY, 5);
   const fetchMode = normalizeFetchMode(args["fetch-mode"] || process.env.DOCS_FETCH_MODE || "auto");
-  const jinaRpm = parseNumber(args["jina-rpm"] || process.env.DOCS_JINA_RPM, 12);
+  const jinaRpm = parseNumber(args["jina-rpm"] || process.env.DOCS_JINA_RPM, 20);
   const jinaApiKey = args["jina-key"] || process.env.DOCS_JINA_KEY || "";
 
   const normalizedStart = normalizeUrl(docsUrl);
