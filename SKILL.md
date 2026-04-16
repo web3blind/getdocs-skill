@@ -1,6 +1,6 @@
 ---
 name: getdocs
-description: Download public documentation into Markdown for later analysis. Use when the user wants docs fetched from a URL with `/docs onefile URL`, `/docs manyfiles URL`, `docs in one file URL`, or `docs in many files URL`, and the agent should return either one Markdown file or a folder plus file list for page-by-page browsing.
+description: Download public documentation into Markdown for later analysis. Use when the user wants docs fetched from a URL with `/docs onefile URL` or `/docs manyfiles URL`, and the agent should return either one Markdown file or a folder plus file list for page-by-page browsing.
 ---
 
 # Get docs
@@ -9,12 +9,10 @@ Use this skill from the skill root.
 
 ## Supported user commands
 
-Treat these English forms as canonical:
+For the user, the public interface is only:
 
 - `/docs onefile <url>`
 - `/docs manyfiles <url>`
-- `docs in one file <url>`
-- `docs in many files <url>`
 
 Map `onefile` to a single Markdown export. Map `manyfiles` to one Markdown file per page plus a file list manifest.
 
@@ -32,7 +30,7 @@ or:
 node scripts/getdocs.js manyfiles <url>
 ```
 
-The wrapper also accepts the raw user command forms above, but prefer the canonical `onefile` / `manyfiles` invocation when you run it yourself.
+The wrapper may keep compatibility parsing internally, but user-facing guidance should expose only `/docs onefile <url>` and `/docs manyfiles <url>`.
 
 ## Packaging
 
@@ -85,6 +83,7 @@ Do not paste the downloaded documentation unless the user asks for content. Down
 
 **Notes**
 
+- Internally the downloader first tries `r.jina.ai`, then falls back to direct fetch automatically. Do not ask the user to choose a fetch mode.
 - The downloader continues even if some pages fail — it logs warnings but saves successfully downloaded pages.
 - The wrapper stores each run in `runs/` with an isolated timestamped directory.
 - The generated `FILELIST.md` is the preferred entry point for selecting a page in `manyfiles` mode.

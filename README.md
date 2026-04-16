@@ -2,6 +2,13 @@
 
 OpenClaw skill for downloading public documentation into Markdown format.
 
+For the user, use only:
+
+- `/docs onefile <url>`
+- `/docs manyfiles <url>`
+
+The downloader first tries `r.jina.ai` and automatically falls back to direct fetch if needed.
+
 ## Installation
 
 ```bash
@@ -22,12 +29,10 @@ node scripts/getdocs.js onefile <url>
 node scripts/getdocs.js manyfiles <url>
 ```
 
-### Supported command formats
+### Supported public commands
 
 - `/docs onefile <url>`
 - `/docs manyfiles <url>`
-- `docs in one file <url>`
-- `docs in many files <url>`
 
 ## Output
 
