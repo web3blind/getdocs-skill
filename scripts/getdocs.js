@@ -14,6 +14,8 @@ const runsRoot = path.join(skillRoot, "runs");
 const UTF8_BOM = "\uFEFF";
 const FULL_RUN_ATTEMPTS = 3;
 const FULL_RUN_RETRY_DELAY_MS = 1500;
+const QMD_COLLECTION_PREFIX = "getdocs";
+const QMD_DISABLED_VALUES = new Set(["0", "false", "off", "no"]);
 
 function printHelp() {
   console.log(`Usage:
@@ -38,6 +40,144 @@ function sanitizeSegment(segment) {
 
 function hostFolderName(hostname) {
   return hostname.replace(/[:*?"<>|\\/\x00-\x1F]/g, "_");
+}
+
+function qmdSafeName(value) {
+  const clean = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 96);
+
+  return clean || "docs";
+}
+
+function buildQmdCollectionName(runName) {
+  return qmdSafeName(`${QMD_COLLECTION_PREFIX}_${runName}`);
+}
+
+function isQmdDisabled() {
+  const value = process.env.GETDOCS_QMD;
+  return value && QMD_DISABLED_VALUES.has(value.trim().toLowerCase());
+}
+
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getQmdCommandCandidates() {
+  if (isQmdDisabled()) {
+    return [];
+  }
+
+  if (process.env.GETDOCS_QMD_BIN) {
+    return [process.env.GETDOCS_QMD_BIN];
+  }
+
+  const candidates = [];
+  const workspaceQmd = path.resolve(skillRoot, "..", "..", "scripts", "qmd-local.sh");
+  if (await pathExists(workspaceQmd)) {
+    candidates.push(workspaceQmd);
+  }
+
+  candidates.push("qmd");
+  return [...new Set(candidates)];
+}
+
+function isMissingCommandError(error) {
+  const message = error?.message || String(error);
+  return error?.code === "ENOENT" || /not found|no such file|command not found/i.test(message);
+}
+
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || skillRoot,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+
+      const message = [
+        `${command} ${args.join(" ")} exited with code ${code}.`,
+        stdout.trim(),
+        stderr.trim()
+      ]
+        .filter(Boolean)
+        .join("\n");
+      reject(new Error(message));
+    });
+  });
+}
+
+async function createQmdIndex({ runName, finalDir }) {
+  const commands = await getQmdCommandCandidates();
+  if (commands.length === 0) {
+    return {
+      status: "disabled",
+      collection: null,
+      commandHint: null,
+      error: null
+    };
+  }
+
+  const collection = buildQmdCollectionName(runName);
+  const missingErrors = [];
+
+  for (const command of commands) {
+    try {
+      await runCommand(command, ["collection", "add", finalDir, "--name", collection]);
+      await runCommand(command, ["collection", "exclude", collection]);
+
+      return {
+        status: "created",
+        collection,
+        commandHint: `${command} search -c ${collection} <query>`,
+        error: null
+      };
+    } catch (error) {
+      if (isMissingCommandError(error)) {
+        missingErrors.push(`${command}: ${error?.message || String(error)}`);
+        continue;
+      }
+
+      return {
+        status: "failed",
+        collection,
+        commandHint: null,
+        error: error?.message || String(error)
+      };
+    }
+  }
+
+  return {
+    status: "disabled",
+    collection: null,
+    commandHint: null,
+    error: missingErrors.join("\n") || "QMD command not found"
+  };
 }
 
 function formatTimestamp(date = new Date()) {
@@ -227,14 +367,18 @@ async function writeResultFiles({
   finalDir,
   finalFile,
   fileListPath,
-  files
+  files,
+  qmdIndex
 }) {
   const resultLines = [
     `RESULT_MODE=${mode}`,
     `RESULT_URL=${url}`,
     finalFile ? `RESULT_FILE=${finalFile}` : `RESULT_DIRECTORY=${finalDir}`,
     fileListPath ? `RESULT_FILELIST=${fileListPath}` : null,
-    Array.isArray(files) ? `RESULT_FILES_COUNT=${files.length}` : null
+    Array.isArray(files) ? `RESULT_FILES_COUNT=${files.length}` : null,
+    qmdIndex ? `RESULT_QMD_STATUS=${qmdIndex.status}` : null,
+    qmdIndex?.collection ? `RESULT_QMD_COLLECTION=${qmdIndex.collection}` : null,
+    qmdIndex?.commandHint ? `RESULT_QMD_COMMAND_HINT=${qmdIndex.commandHint}` : null
   ].filter(Boolean);
 
   const resultPath = path.join(runRoot, "RESULT.txt");
@@ -247,7 +391,8 @@ async function writeResultFiles({
     outputFile: finalFile || null,
     outputDirectory: finalDir || null,
     fileListPath: fileListPath || null,
-    files: files || null
+    files: files || null,
+    qmd: qmdIndex || null
   };
 
   await fs.writeFile(path.join(runRoot, "RESULT.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
@@ -294,12 +439,14 @@ async function main() {
   if (mode === "onefile") {
     const finalFile = path.join(finalDir, "full-docs.md");
     await fs.access(finalFile);
+    const qmdIndex = await createQmdIndex({ runName, finalDir });
     const resultLines = await writeResultFiles({
       mode,
       url,
       runRoot,
       finalDir,
-      finalFile
+      finalFile,
+      qmdIndex
     });
 
     console.log(resultLines.join("\n"));
@@ -308,13 +455,15 @@ async function main() {
 
   await fs.access(finalDir);
   const { fileListPath, files } = await writeFileList(finalDir, url);
+  const qmdIndex = await createQmdIndex({ runName, finalDir });
   const resultLines = await writeResultFiles({
     mode,
     url,
     runRoot,
     finalDir,
     fileListPath,
-    files
+    files,
+    qmdIndex
   });
 
   console.log(resultLines.join("\n"));

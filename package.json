@@ -1,7 +1,7 @@
 {
-  "name": "docs-skill",
+  "name": "getdocs-skill",
   "version": "1.0.0",
-  "description": "OpenClaw skill for downloading documentation into Markdown",
+  "description": "OpenClaw skill for downloading public documentation into Markdown with optional QMD indexing",
   "type": "module",
   "scripts": {
     "getdocs": "node scripts/getdocs.js",
@@ -10,6 +10,18 @@
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["openclaw", "skill", "documentation", "markdown", "scraper"],
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "turndown": "^7.2.2",
+    "turndown-plugin-gfm": "^1.0.2"
+  },
+  "keywords": [
+    "openclaw",
+    "skill",
+    "documentation",
+    "markdown",
+    "scraper",
+    "qmd"
+  ],
   "license": "MIT"
 }
