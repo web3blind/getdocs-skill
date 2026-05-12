@@ -95,3 +95,11 @@ Then read only the selected hits, not the whole downloaded docs corpus.
 ## License
 
 MIT
+
+## About author
+
+Created by Denis Skripnik — blind developer working with AI agents, accessibility, automation, and Web3 tooling.
+
+- X: https://x.com/denis_skripnik
+- Telegram (ru): https://t.me/blind_dev
+- VK (ru): https://vk.com/blind_dev
